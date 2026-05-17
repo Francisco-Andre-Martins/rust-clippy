@@ -1,3 +1,4 @@
+mod redundant_idempotent_calls;
 mod bind_instead_of_map;
 mod bytecount;
 mod bytes_count_to_len;
@@ -4833,6 +4834,25 @@ declare_clippy_lint! {
     "Check for offset calculations on raw pointers to zero-sized types"
 }
 
+declare_clippy_lint! {
+    /// ### What it does
+    ///
+    /// ### Why is this bad?
+    ///
+    /// ### Example
+    /// ```no_run
+    /// // example code where clippy issues a warning
+    /// ```
+    /// Use instead:
+    /// ```no_run
+    /// // example code which does not raise clippy warning
+    /// ```
+    #[clippy::version = "1.97.0"]
+    pub REDUNDANT_IDEMPOTENT_CALLS,
+    nursery,
+    "default lint description"
+}
+
 impl_lint_pass!(Methods => [
     BIND_INSTEAD_OF_MAP,
     BYTES_COUNT_TO_LEN,
@@ -4990,6 +5010,7 @@ impl_lint_pass!(Methods => [
     WAKER_CLONE_WAKE,
     WRONG_SELF_CONVENTION,
     ZST_OFFSET,
+    REDUNDANT_IDEMPOTENT_CALLS,
 ]);
 
 #[expect(clippy::struct_excessive_bools)]
