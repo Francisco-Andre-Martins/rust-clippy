@@ -5198,11 +5198,11 @@ impl<'tcx> LateLintPass<'tcx> for Methods {
         cx: &LateContext<'tcx>,
         _kind: rustc_hir::intravisit::FnKind<'tcx>,
         _decl: &'tcx rustc_hir::FnDecl<'tcx>,
-        body: &'tcx rustc_hir::Body<'tcx>,
+        _body: &'tcx rustc_hir::Body<'tcx>,
         _span: rustc_span::Span,
-        _id: rustc_span::def_id::LocalDefId,
+        id: rustc_span::def_id::LocalDefId,
     ) {
-        redundant_idempotent_calls::check(cx, body);
+        redundant_idempotent_calls::check(cx, cx.tcx.optimized_mir(id));
     }
 
 
