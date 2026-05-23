@@ -5063,7 +5063,7 @@ pub fn method_call<'tcx>(recv: &'tcx Expr<'tcx>) -> Option<(Symbol, &'tcx Expr<'
     }
 }
 
-impl<'tcx> LateLintPass<'tcx> for Methods {
+impl<'tcx> z<'tcx> for Methods {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
         for s in &self.allow_unwrap_types {
             let def_ids = clippy_utils::paths::lookup_path_str(cx.tcx, clippy_utils::paths::PathNS::Type, s);
@@ -5192,6 +5192,20 @@ impl<'tcx> LateLintPass<'tcx> for Methods {
             new_ret_no_self::check_trait_item(cx, item);
         }
     }
+
+    fn check_fn(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        _kind: rustc_hir::intravisit::FnKind<'tcx>,
+        _decl: &'tcx rustc_hir::FnDecl<'tcx>,
+        body: &'tcx rustc_hir::Body<'tcx>,
+        _span: rustc_span::Span,
+        _id: rustc_span::def_id::LocalDefId,
+    ) {
+        redundant_idempotent_calls::check(cx, body);
+    }
+
+
 }
 
 impl Methods {
