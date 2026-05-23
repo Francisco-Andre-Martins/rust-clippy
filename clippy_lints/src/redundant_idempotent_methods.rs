@@ -23,4 +23,16 @@ declare_clippy_lint! {
 }
 declare_lint_pass!(RedundantIdempotentMethods => [REDUNDANT_IDEMPOTENT_METHODS]);
 
-impl LateLintPass<'_> for RedundantIdempotentMethods {}
+impl LateLintPass<'_> for RedundantIdempotentMethods {
+    fn check_fn(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        _: FnKind<'tcx>,
+        _: &'tcx FnDecl<'_>,
+        _: &'tcx Body<'_>,
+        _: Span,
+        def_id: LocalDefId,
+    ) {
+        
+    }
+}
