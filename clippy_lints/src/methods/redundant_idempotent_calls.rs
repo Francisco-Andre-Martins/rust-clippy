@@ -1,11 +1,11 @@
 use clippy_utils::sym;
-use rustc_hir::{Body, ExprKind, StmtKind};
+use rustc_hir::def::Res;
+use rustc_hir::{Body, ExprKind, HirId, PatKind, QPath, StmtKind};
 use rustc_lint::LateContext;
 use rustc_span::Symbol;
 use std::collections::HashMap;
 
-
-use super::REDUNDANT_IDEMPOTENT_CALLS
+use super::REDUNDANT_IDEMPOTENT_CALLS;
 
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
 
@@ -15,6 +15,11 @@ pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
         walk_block(cx, block, &mut map);
     }
 }
+
+let bla = 1.32_f64.floor();
+bla.floor();
+
+
 
 fn walk_block<'tcx>(
     cx: &LateContext<'tcx>,
@@ -39,7 +44,7 @@ fn check_let<'tcx>(
     map: &mut HashMap<HirId, Symbol>,
 ) {
     if let Some(init) = local.init
-        && let ExprKind::MethodCall(mehtod, _receiver, args, _) = &init.kind
+        && let ExprKind::MethodCall(method, _receiver, args, _) = &init.kind
         && args.is_empty()
         && is_idempotent(method.ident.name)
         && let PatKind::Binding(_, hir_id, _, _) = local.pat.kind
@@ -52,4 +57,13 @@ fn is_idempotent(name: Symbol) -> bool {
     matches!(name,
         sym::to_lowercase | sym::to_uppercase | sym::trim | sym::abs
     )
+}
+
+fn check_expr<'tcx>(
+    cx: &LateContext<'tcx>,
+    expr: &'tcx rustc_hir::Expr<'tcx>,
+    map: &mut HashMap<HirId, Symbol>,
+) {
+    if let ExprKind:: MethodCall(method, receiver, args, _) = &expr.kind
+    && args.is_empty
 }

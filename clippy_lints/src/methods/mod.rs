@@ -5063,7 +5063,7 @@ pub fn method_call<'tcx>(recv: &'tcx Expr<'tcx>) -> Option<(Symbol, &'tcx Expr<'
     }
 }
 
-impl<'tcx> z<'tcx> for Methods {
+impl<'tcx> LateLintPass<'tcx> for Methods {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
         for s in &self.allow_unwrap_types {
             let def_ids = clippy_utils::paths::lookup_path_str(cx.tcx, clippy_utils::paths::PathNS::Type, s);
