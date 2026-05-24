@@ -8,8 +8,8 @@ use rustc_span::Symbol;
 
 // use crate::methods::REDUNDANT_IDEMPOTENT_CALLS_INFO;
 
-use super::REDUNDANT_IDEMPOTENT_CALLS;
 
+use super::REDUNDANT_IDEMPOTENT_CALLS;
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
     // If the body of the funciton is a block
     if let ExprKind::Block(block, _) = &body.value.kind {
@@ -22,12 +22,11 @@ pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
 
 fn walk_block<'tcx>(cx: &LateContext<'tcx>, block: &'tcx rustc_hir::Block<'tcx>, map: &mut FxIndexMap<HirId, Symbol>) {
     for stmt in block.stmts {
+        //println!("blcok is {:#?}",stmt.kind);
         match &stmt.kind {
+            
             StmtKind::Let(local) => check_let(cx, local, map),
-            StmtKind::Semi(expr) => {
-                check_expr(cx, expr, map);
-            },
-            StmtKind::Expr(expr) => {
+            StmtKind::Semi(expr) | StmtKind::Expr(expr)  => {
                 check_expr(cx, expr, map);
             },
             _ => {},
@@ -48,25 +47,14 @@ fn invalidate_left_value<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxIn
 fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>, map: &mut FxIndexMap<HirId, Symbol>) {
     if let Some(init) = local.init
         && let ExprKind::MethodCall(method, receiver, args, _) = &init.kind
-        && args.is_empty()
-        && is_idempotent(method.ident.name)
-    {
-        if let Some(hir_id) = path_to_local(receiver)
-            && let Some(recorded_method) = map.get(&hir_id)
-            && *recorded_method == method.ident.name
         {
-            span_lint(
-                cx,
-                REDUNDANT_IDEMPOTENT_CALLS,
-                init.span,
-                "redundant call to idempotent method, the result is already the same",
-            );
+            check_method_call(cx,init,method,receiver,args,map);
+            // record the new binding if it is a simple identifier
+            if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
+                map.insert(hir_id, method.ident.name);
+            }
         }
-        // record the new binding if it is a simple identifier
-        if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
-            map.insert(hir_id, method.ident.name);
-        }
-    }
+
 }
 
 fn is_idempotent(name: Symbol) -> bool {
@@ -123,6 +111,8 @@ fn check_method_call<'tcx>(
 
         return false;
     }
+    //println!("the receiver is...{:#?}",receiver.kind);
+
     if is_idempotent(method.ident.name)
         && let Some(hir_id) = path_to_local(receiver)
         && let Some(recorded_method) = map.get(&hir_id)
@@ -137,6 +127,18 @@ fn check_method_call<'tcx>(
         } else {
             map.insert(hir_id, method.ident.name);
             return true;
+        }
+    }
+    else if is_idempotent(method.ident.name)  && let ExprKind::MethodCall(recursive_method,..)=receiver.kind
+    {
+        //println!("the og name is {:#?}, the upwards is {:#?}",method.ident.name,recursive_method.ident.name);
+        if method.ident.name == recursive_method.ident.name{
+            span_lint(
+                cx,
+                REDUNDANT_IDEMPOTENT_CALLS,
+                expr.span,
+                "redundant call to idempotent method, the result is already the same",
+            );
         }
     }
     false
@@ -181,6 +183,9 @@ fn check_assign<'tcx>(
 ) -> bool {
     if !check_expr(cx, right_value, map) {
         invalidate_left_value(left_value, map);
+    } else if let Some(hir_id) = path_to_local(right_value) {
+        
+        //map.insert(hir_id,);
     }
     false
 }
