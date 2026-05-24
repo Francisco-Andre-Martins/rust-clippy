@@ -1,4 +1,3 @@
-mod redundant_idempotent_calls;
 mod bind_instead_of_map;
 mod bytecount;
 mod bytes_count_to_len;
@@ -103,6 +102,7 @@ mod range_zip_with_len;
 mod read_line_without_trim;
 mod readonly_write_lock;
 mod redundant_as_str;
+mod redundant_idempotent_calls;
 mod repeat_once;
 mod result_map_or_else_none;
 mod return_and_then;
@@ -3248,6 +3248,25 @@ declare_clippy_lint! {
 
 declare_clippy_lint! {
     /// ### What it does
+    ///
+    /// ### Why is this bad?
+    ///
+    /// ### Example
+    /// ```no_run
+    /// // example code where clippy issues a warning
+    /// ```
+    /// Use instead:
+    /// ```no_run
+    /// // example code which does not raise clippy warning
+    /// ```
+    #[clippy::version = "1.97.0"]
+    pub REDUNDANT_IDEMPOTENT_CALLS,
+    nursery,
+    "default lint description"
+}
+
+declare_clippy_lint! {
+    /// ### What it does
     /// Checks for calls to `Iterator::cloned` where the original value could be used
     /// instead.
     ///
@@ -4834,25 +4853,6 @@ declare_clippy_lint! {
     "Check for offset calculations on raw pointers to zero-sized types"
 }
 
-declare_clippy_lint! {
-    /// ### What it does
-    ///
-    /// ### Why is this bad?
-    ///
-    /// ### Example
-    /// ```no_run
-    /// // example code where clippy issues a warning
-    /// ```
-    /// Use instead:
-    /// ```no_run
-    /// // example code which does not raise clippy warning
-    /// ```
-    #[clippy::version = "1.97.0"]
-    pub REDUNDANT_IDEMPOTENT_CALLS,
-    nursery,
-    "default lint description"
-}
-
 impl_lint_pass!(Methods => [
     BIND_INSTEAD_OF_MAP,
     BYTES_COUNT_TO_LEN,
@@ -4959,6 +4959,7 @@ impl_lint_pass!(Methods => [
     READONLY_WRITE_LOCK,
     READ_LINE_WITHOUT_TRIM,
     REDUNDANT_AS_STR,
+    REDUNDANT_IDEMPOTENT_CALLS,
     REDUNDANT_ITER_CLONED,
     REPEAT_ONCE,
     RESULT_FILTER_MAP,
@@ -5010,7 +5011,6 @@ impl_lint_pass!(Methods => [
     WAKER_CLONE_WAKE,
     WRONG_SELF_CONVENTION,
     ZST_OFFSET,
-    REDUNDANT_IDEMPOTENT_CALLS,
 ]);
 
 #[expect(clippy::struct_excessive_bools)]
@@ -5199,13 +5199,11 @@ impl<'tcx> LateLintPass<'tcx> for Methods {
         _kind: rustc_hir::intravisit::FnKind<'tcx>,
         _decl: &'tcx rustc_hir::FnDecl<'tcx>,
         body: &'tcx rustc_hir::Body<'tcx>,
-        _span: rustc_span::Span,
+        _span: Span,
         _id: rustc_span::def_id::LocalDefId,
     ) {
         redundant_idempotent_calls::check(cx, body);
     }
-
-
 }
 
 impl Methods {
