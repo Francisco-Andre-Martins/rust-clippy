@@ -1,59 +1,50 @@
 use clippy_utils::sym;
+use rustc_hir::{Body, ExprKind, StmtKind};
 use rustc_lint::LateContext;
-use rustc_middle::mir::Body;
-use rustc_mir_dataflow::JoinSemiLattice;
 use rustc_span::Symbol;
+use std::collections::HashMap;
 
-use super::REDUNDANT_IDEMPOTENT_CALLS;
+
+use super::REDUNDANT_IDEMPOTENT_CALLS
 
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
-    // Avoids ICE
-    if fn_has_unsatisfiable_preds(cx, body.source.def_id()) {
-        return;
+
+    // If the body of the funciton is a block
+    if let ExprKind::Block(block, _) = &body.value.kind {
+        let mut map = HashMap::new();
+        walk_block(cx, block, &mut map);
     }
+}
 
-    // State initilizer, every local mapping to Bottom
-    let mut state: IndexVec<Local, MethodState> = IndexVec::from_elem(
-        MethodState::Bottom,
-        &body.local_decls,
-    );
-
-    // Iterate over basic blocks in order
-    for (_bb, bbdata) in body.basic_blocks.iter_enumerated() {
-
-        for statement in &bbdata.statements{
-
+fn walk_block<'tcx>(
+    cx: &LateContext<'tcx>,
+    block: &'tcx rustc_hir::Block<'tcx>,
+    map: &mut HashMap<HirId, Symbol>,
+) {
+    for stmt in block.stmts {
+        match &stmt.kind {
+            StmtKind::Let(local) => check_let(local, map),
+            StmtKind::Semi(expr) => check_expr(cx, expr, map),
+            _ => {},
         }
-
-        let terminator = bbdata.terminator();
     }
 
+    if let Some(expr) = block.expr {
+        check_expr(cx, expr, map);
+    }
 }
 
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum MethodState {
-    Bottom,
-    Applied(Symbol),
-    Top,
-}
-
-// Logic:
-// update if needed the join value
-// https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_mir_dataflow/framework/lattice.rs.html#107-121
-// e.g.
-// self=Top, other=Applied(to_lowercase) ---> no change is needed, it remains Top
-impl JoinSemiLattice for MethodState {
-    fn join(&mut self, other: &Self) -> bool {
-        let result = match (&*self, other) {
-            (Self::Top, _) | (_, Self::Bottom) => return false,
-            (Self::Applied(a), Self::Applied(b)) if a == b => return false,
-            (Self::Bottom, Self::Applied(x)) => Self::Applied(x.clone()),
-            _=> Self::Top,
-        };
-        // self has changed
-        *self = result;
-        true
+fn check_let<'tcx>(
+    local: &'tcx rustc_hir::LetStmt<'tcx>,
+    map: &mut HashMap<HirId, Symbol>,
+) {
+    if let Some(init) = local.init
+        && let ExprKind::MethodCall(mehtod, _receiver, args, _) = &init.kind
+        && args.is_empty()
+        && is_idempotent(method.ident.name)
+        && let PatKind::Binding(_, hir_id, _, _) = local.pat.kind
+    {
+        map.insert(hir_id, method.ident.name);
     }
 }
 
