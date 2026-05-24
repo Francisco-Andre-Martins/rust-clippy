@@ -79,7 +79,7 @@ fn check_expr<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx rustc_hir::Expr<'tcx>,
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+) -> Option<Symbol> {
     match &expr.kind {
         ExprKind::MethodCall(method, receiver, args, _) => check_method_call(cx, expr, method, receiver, args, map),
         ExprKind::If(_, then_block, else_block) => check_if(cx, then_block, else_block, map),
@@ -87,10 +87,20 @@ fn check_expr<'tcx>(
         ExprKind::AssignOp(_, left_value, right_value) => check_assign(cx, left_value, right_value, map),
         ExprKind::Loop(block, _, _, _) => check_loop(cx, block, map),
         ExprKind::Match(_, arms, _) => check_match(cx, arms, map),
-        _ => false,
+        ExprKind::Call(_,args)=> check_func_args(args, map),
+        _ => None,
     }
 }
-
+fn check_func_args<'tcx>(args: &'tcx [rustc_hir::Expr<'tcx>],map: &mut FxIndexMap<HirId, Symbol>)->Option<Symbol>{
+    for arg in args {
+        if let ExprKind::AddrOf(_, Mutability::Mut, inner) = &arg.kind
+            && let Some(hir_id) = path_to_local(inner)
+        {
+            map.shift_remove(&hir_id);
+        }
+    }
+    return None;
+}
 fn check_method_call<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx rustc_hir::Expr<'tcx>,
@@ -98,18 +108,9 @@ fn check_method_call<'tcx>(
     receiver: &'tcx rustc_hir::Expr<'tcx>,
     args: &'tcx [rustc_hir::Expr<'tcx>],
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+) -> Option<Symbol> {
     if !args.is_empty() {
-        // invalidade any locals passed as &mut
-        for arg in args {
-            if let ExprKind::AddrOf(_, Mutability::Mut, inner) = &arg.kind
-                && let Some(hir_id) = path_to_local(inner)
-            {
-                map.shift_remove(&hir_id);
-            }
-        }
-
-        return false;
+        return check_func_args(args, map);
     }
     //println!("the receiver is...{:#?}",receiver.kind);
 
@@ -126,7 +127,7 @@ fn check_method_call<'tcx>(
             );
         } else {
             map.insert(hir_id, method.ident.name);
-            return true;
+            return Some(method.ident.name);
         }
     }
     else if is_idempotent(method.ident.name)  && let ExprKind::MethodCall(recursive_method,..)=receiver.kind
@@ -140,8 +141,10 @@ fn check_method_call<'tcx>(
                 "redundant call to idempotent method, the result is already the same",
             );
         }
+    } else if is_idempotent(method.ident.name){
+        return Some(method.ident.name);
     }
-    false
+    None
 }
 
 fn check_if<'tcx>(
@@ -149,7 +152,7 @@ fn check_if<'tcx>(
     then_block: &'tcx rustc_hir::Expr<'tcx>,
     else_block: &Option<&'tcx rustc_hir::Expr<'tcx>>,
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+) -> Option<Symbol> {
     // each branch gets its own clone to avoid cross contamination
     let mut then_map = map.clone();
     if let ExprKind::Block(block, _) = &then_block.kind {
@@ -172,7 +175,7 @@ fn check_if<'tcx>(
         // no "else" branch
         map.retain(|hir_id, method| then_map.get(hir_id) == Some(method));
     }
-    false
+    None
 }
 
 fn check_assign<'tcx>(
@@ -180,35 +183,35 @@ fn check_assign<'tcx>(
     left_value: &'tcx rustc_hir::Expr<'tcx>,
     right_value: &'tcx rustc_hir::Expr<'tcx>,
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
-    if !check_expr(cx, right_value, map) {
+) -> Option<Symbol> {
+    if let Some(symbol)=check_expr(cx, right_value, map) && let Some(hir_id) = path_to_local(left_value) {
+        map.insert(hir_id,symbol);
+    } else{
         invalidate_left_value(left_value, map);
-    } else if let Some(hir_id) = path_to_local(right_value) {
-        
-        //map.insert(hir_id,);
+
     }
-    false
+    None
 }
 
 fn check_loop<'tcx>(
     cx: &LateContext<'tcx>,
     block: &'tcx rustc_hir::Block<'tcx>,
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+) -> Option<Symbol> {
     walk_block(cx, block, map);
-    false
+    None
 }
 
 fn check_match<'tcx>(
     cx: &LateContext<'tcx>,
     arms: &'tcx [rustc_hir::Arm<'tcx>],
     map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+) -> Option<Symbol> {
     for arm in arms {
         let mut arm_map = map.clone();
         if let ExprKind::Block(block, _) = &arm.body.kind {
             walk_block(cx, block, &mut arm_map);
         }
     }
-    false
+    None
 }
