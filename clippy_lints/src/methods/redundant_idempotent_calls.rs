@@ -13,9 +13,7 @@ pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
     if let ExprKind::Block(block, _) = &body.value.kind {
         // what is this hasmap for storing?
         let mut map = FxHashMap::default();
-        println!("the whole dirty block{:#?}",block);
         walk_block(cx, block, &mut map);
-        println!("the whole map at the end {:#?}",map);
     }
 }
 // note to self, method calls are expressions, not statements
@@ -25,9 +23,7 @@ fn walk_block<'tcx>(cx: &LateContext<'tcx>, block: &'tcx rustc_hir::Block<'tcx>,
         match &stmt.kind {
             StmtKind::Let(local) => check_let(local, map),
             StmtKind::Semi(expr) => {
-                check_expr(cx, expr, map);
-                invalidate_map(expr, map);
-                
+                check_expr(cx, expr, map);                
             },
             StmtKind::Expr(expr)=>{
                 check_expr(cx, expr, map);
@@ -41,9 +37,8 @@ fn walk_block<'tcx>(cx: &LateContext<'tcx>, block: &'tcx rustc_hir::Block<'tcx>,
     }
 }
 
-fn invalidate_map<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>) {
-    if let ExprKind::Assign(lhs, _, _) = &expr.kind
-        && let Some(hir_id) = path_to_local(lhs)
+fn invalidate_left_value<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>) {
+    if  let Some(hir_id) = path_to_local(expr)
     {
         map.remove(&hir_id);
     }
@@ -76,6 +71,7 @@ fn path_to_local(expr: &rustc_hir::Expr<'_>) -> Option<HirId> {
 
 fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>) {
     match expr.kind{
+        // TODO check if args have mut reference to any variable in map!!
         ExprKind::MethodCall(method, receiver, args, _) =>{
             if  args.is_empty()
                 && is_idempotent(method.ident.name)
@@ -94,7 +90,6 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, m
         ExprKind::If(_,is_a_block,maybe_block)=>{
             match is_a_block.kind{
                 ExprKind::Block(block,..)=>{
-                    println!("goin on a walk");
                     walk_block(cx, &block, map);
                 }
                 _=>{}
@@ -103,7 +98,6 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, m
                 Some(stuff)=>{
                     match stuff.kind{
                         ExprKind::Block(block,..)=>{
-                            println!("goin another a walk");
                             walk_block(cx, &block, map);
                         }
                         _=>{}
@@ -113,9 +107,19 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, m
             }
             
         }
+        ExprKind::Assign(left_value,right_value,..)=>{
+            check_expr(cx,right_value,map);
+            invalidate_left_value(left_value, map);
+        }
+        ExprKind::AssignOp(_op,left_value,right_value)=>{
+            check_expr(cx,right_value,map);
+            invalidate_left_value(left_value, map);
+        }
+        ExprKind::Loop(block,..)=>{
+            walk_block(cx,block,map);
+        }
         _=>{}
     }
 
-    // we just need to add a "recursive" call to walk block for every expression that may contain a block
     
 }
