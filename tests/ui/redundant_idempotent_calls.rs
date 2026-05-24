@@ -39,9 +39,41 @@ fn no_false_positive_invalidation() {
     }
     t.to_lowercase();
 }
-
+fn complicated_cases(){
+    let mut c = 1.32_f64.floor();
+    let mut sometime_ago=false;
+    if(sometime_ago){
+        println!("sorry");
+    } else{
+        println!("too early for that");
+    }
+    while(sometime_ago){
+        c = c.floor();
+        //~^ redundant_idempotent_calls
+        sometime_ago=false;
+    }
+}
+fn complicated_casestoo(){
+    let c = 1.32_f64.floor();
+    let mut sometime_ago=false;
+    if(sometime_ago){
+        println!("sorry");
+    } else{
+        println!("too early for that");
+    }
+    while(sometime_ago){
+        sometime_ago=false;
+    }
+}
+fn simple_one(){
+    let mut c =1.32_f64;
+    c= c.floor();
+    c = c.floor();
+    //~^ redundant_idempotent_calls
+}
 fn main() {
     let var = 1.32_f64.floor().floor();
+    //~^ redundant_idempotent_calls
     let var2 = 1.32_f64;
     let mut var3 = 1.32_f64.floor();
     var3 = var3.floor();
