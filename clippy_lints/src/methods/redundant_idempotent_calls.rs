@@ -68,8 +68,8 @@ fn path_to_local(expr: &rustc_hir::Expr<'_>) -> Option<HirId> {
         None
     }
 }
-
-fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>) {
+// returns true if there is an insertion into the map
+fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>)->bool {
     match expr.kind{
         // TODO check if args have mut reference to any variable in map!!
         ExprKind::MethodCall(method, receiver, args, _) =>{
@@ -77,14 +77,19 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, m
                 && is_idempotent(method.ident.name)
                 && let Some(hir_id) = path_to_local(receiver)
                 && let Some(recorded_method) = map.get(&hir_id)
-                && *recorded_method == method.ident.name
             {
-                span_lint(
-                    cx,
-                    REDUNDANT_IDEMPOTENT_CALLS,
-                    expr.span,
-                    "redundant call to idempotent method, the result is already the same",
-                );
+                if *recorded_method == method.ident.name{
+                    span_lint(
+                        cx,
+                        REDUNDANT_IDEMPOTENT_CALLS,
+                        expr.span,
+                        "redundant call to idempotent method, the result is already the same",
+                    );
+                } else{
+                    map.insert(hir_id,method.ident.name);
+                    return true;
+                }
+
             }
         }
         ExprKind::If(_,is_a_block,maybe_block)=>{
@@ -108,18 +113,32 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, m
             
         }
         ExprKind::Assign(left_value,right_value,..)=>{
-            check_expr(cx,right_value,map);
-            invalidate_left_value(left_value, map);
+            if !check_expr(cx,right_value,map) {
+                invalidate_left_value(left_value, map);
+            }
         }
         ExprKind::AssignOp(_op,left_value,right_value)=>{
-            check_expr(cx,right_value,map);
-            invalidate_left_value(left_value, map);
+            if !check_expr(cx,right_value,map) {
+                invalidate_left_value(left_value, map);
+
+            }
         }
         ExprKind::Loop(block,..)=>{
             walk_block(cx,block,map);
         }
+        ExprKind::Match(_,arms,..)=>{
+            for arm in arms{
+                match arm.body.kind{
+                    ExprKind::Block(block,..)=>{
+                        walk_block(cx, &block, map);
+                    }
+                    _=>{}
+                }
+            }
+ 
+        }
         _=>{}
     }
-
+    return false;
     
 }
