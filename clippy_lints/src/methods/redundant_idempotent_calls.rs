@@ -68,28 +68,36 @@ fn path_to_local(expr: &rustc_hir::Expr<'_>) -> Option<HirId> {
         None
     }
 }
+// Checks if any args in the function or method call can be altered by the callee, and if so, removes them from the map
+// fn check_fn_args<'tcx,'a>(cx: &LateContext<'tcx>,map: &mut FxHashMap<HirId, Symbol>, args: impl IntoIterator<Item = rustc_hir::Expr<'_>>){
+
+// }
+
+
 // returns true if there is an insertion into the map
 fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxHashMap<HirId, Symbol>)->bool {
     match expr.kind{
         // TODO check if args have mut reference to any variable in map!!
         ExprKind::MethodCall(method, receiver, args, _) =>{
             if  args.is_empty()
-                && is_idempotent(method.ident.name)
-                && let Some(hir_id) = path_to_local(receiver)
-                && let Some(recorded_method) = map.get(&hir_id)
             {
-                if *recorded_method == method.ident.name{
-                    span_lint(
-                        cx,
-                        REDUNDANT_IDEMPOTENT_CALLS,
-                        expr.span,
-                        "redundant call to idempotent method, the result is already the same",
-                    );
-                } else{
-                    map.insert(hir_id,method.ident.name);
-                    return true;
+                if is_idempotent(method.ident.name)
+                && let Some(hir_id) = path_to_local(receiver)
+                && let Some(recorded_method) = map.get(&hir_id){
+                    if *recorded_method == method.ident.name{
+                        span_lint(
+                            cx,
+                            REDUNDANT_IDEMPOTENT_CALLS,
+                            expr.span,
+                            "redundant call to idempotent method, the result is already the same",
+                        );
+                    } else{
+                        map.insert(hir_id,method.ident.name);
+                        return true;
+                    }
                 }
-
+            } else{
+                //check_fn_args(cx,map,args);
             }
         }
         ExprKind::If(_,is_a_block,maybe_block)=>{
