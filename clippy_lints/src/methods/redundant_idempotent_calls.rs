@@ -1,5 +1,6 @@
 use clippy_utils::diagnostics::span_lint;
 use clippy_utils::sym;
+use clippy_utils::ty::ExprFnSig::Closure;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir::def::Res;
 use rustc_hir::{Body, ExprKind, HirId, Mutability, PatKind, QPath, StmtKind};
@@ -24,7 +25,7 @@ fn walk_block<'tcx>(cx: &LateContext<'tcx>, block: &'tcx rustc_hir::Block<'tcx>,
     for stmt in block.stmts {
         //println!("blcok is {:#?}",stmt.kind);
         match &stmt.kind {
-            
+
             StmtKind::Let(local) => check_let(cx, local, map),
             StmtKind::Semi(expr) | StmtKind::Expr(expr)  => {
                 check_expr(cx, expr, map);
@@ -47,6 +48,7 @@ fn invalidate_left_value<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxIn
 fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>, map: &mut FxIndexMap<HirId, Symbol>) {
     if let Some(init) = local.init
         && let ExprKind::MethodCall(method, receiver, args, _) = &init.kind
+        && is_idempotent(method.ident.name)
         {
             check_method_call(cx,init,method,receiver,args,map);
             // record the new binding if it is a simple identifier
@@ -87,7 +89,8 @@ fn check_expr<'tcx>(
         ExprKind::AssignOp(_, left_value, right_value) => check_assign(cx, left_value, right_value, map),
         ExprKind::Loop(block, _, _, _) => check_loop(cx, block, map),
         ExprKind::Match(_, arms, _) => check_match(cx, arms, map),
-        ExprKind::Call(_,args)=> check_func_args(args, map),
+        ExprKind::Call(_,args) => check_func_args(args, map),
+        ExprKind::Closure(closure) => check_closure(cx, closure, map),
         _ => None,
     }
 }
@@ -214,4 +217,13 @@ fn check_match<'tcx>(
         }
     }
     None
+}
+
+fn check_closure<'tcx>(
+    cx: &LateContext<'tcx>,
+    closure: &'tcx rustc_hir::Closure<'tcx>,
+    map: &mut FxIndexMap<HirId, Symbol>,
+) -> Option<Symbol> {
+    let closure_def_id = closure.def_id;
+    // PRECISO DE ACABAR AINDA FRANCISCO
 }

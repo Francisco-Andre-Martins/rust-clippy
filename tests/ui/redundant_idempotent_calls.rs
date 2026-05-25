@@ -71,6 +71,20 @@ fn simple_one(){
     c = c.floor();
     //~^ redundant_idempotent_calls
 }
+
+fn false_positive_non_idempotent_pollutes_map() {
+    let s = "Never gonna give you up".to_string();
+    let _t = s.to_lowercase();
+    s.to_lowercase();
+}
+
+fn closure_should_not_trigger() {
+    let mut s = "Never gonna let you down".to_lowercase();
+    let mut f = || s = String::from("world");
+    f();
+    s.to_lowercase();
+}
+
 fn main() {
     let var = 1.32_f64.floor().floor();
     //~^ redundant_idempotent_calls
