@@ -22,7 +22,7 @@ pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
 fn walk_block<'tcx>(
     cx: &LateContext<'tcx>,
     block: &'tcx rustc_hir::Block<'tcx>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     for stmt in block.stmts {
         match &stmt.kind {
@@ -40,13 +40,13 @@ fn walk_block<'tcx>(
     None
 }
 
-fn invalidate_left_value<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxIndexMap<HirId, Symbol>) {
+fn invalidate_left_value<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>, map: &mut FxIndexMap<HirId,(Symbol, &[ rustc_hir::Expr<'_>])>) {
     if let Some(hir_id) = path_to_local(expr) {
         map.shift_remove(&hir_id);
     }
 }
 
-fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>, map: &mut FxIndexMap<HirId, Symbol>) {
+fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>, map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>) {
     if let Some(init) = local.init {
         let mut expr = init;
         // inrelevant and inserted by the compiler
@@ -60,14 +60,14 @@ fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>
             check_method_call(cx, expr, method, receiver, args, map);
             // record the new binding if it is a simple identifier
             if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
-                map.insert(hir_id, method.ident.name);
+                map.insert(hir_id, (method.ident.name,args));
             }
         } else {
             if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
                 // try to inherit the alias symbol otherwise we check the expr
-                if !try_inherit_alias(expr, hir_id, map) {
+                if let (retval,args) = try_inherit_alias(expr, hir_id, map) && retval{
                     if let Some(symbol) = check_expr(cx, expr, map) {
-                        map.insert(hir_id, symbol);
+                        map.insert(hir_id, (symbol,args));
                     }
                 }
             } else {
@@ -98,7 +98,7 @@ fn path_to_local(expr: &rustc_hir::Expr<'_>) -> Option<HirId> {
 fn check_expr<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx rustc_hir::Expr<'tcx>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     match &expr.kind {
         ExprKind::MethodCall(method, receiver, args, _) => check_method_call(cx, expr, method, receiver, args, map),
@@ -144,7 +144,7 @@ fn check_expr<'tcx>(
         _ => None,
     }
 }
-fn check_func_args<'tcx>(cx: &LateContext<'tcx>, args: &'tcx [rustc_hir::Expr<'tcx>], map: &mut FxIndexMap<HirId, Symbol>) -> Option<Symbol> {
+fn check_func_args<'tcx>(cx: &LateContext<'tcx>, args: &'tcx [rustc_hir::Expr<'tcx>], map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>) -> Option<Symbol> {
     for arg in args {
         if let ExprKind::AddrOf(_, Mutability::Mut, inner) = &arg.kind
             && let Some(hir_id) = path_to_local(inner)
@@ -156,13 +156,22 @@ fn check_func_args<'tcx>(cx: &LateContext<'tcx>, args: &'tcx [rustc_hir::Expr<'t
     }
     return None;
 }
+fn are_args_equal<'tcx>(args1: &'tcx [rustc_hir::Expr<'tcx>], args2:  &'tcx [rustc_hir::Expr<'tcx>])->bool{
+    for it in args1.iter().zip(args2.iter()){
+        let(arg1,arg2) = it;
+        if arg1.hir_id!=arg2.hir_id{
+            return false;
+        }
+    }
+    true
+}
 fn check_method_call<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx rustc_hir::Expr<'tcx>,
     method: &rustc_hir::PathSegment<'tcx>,
     receiver: &'tcx rustc_hir::Expr<'tcx>,
     args: &'tcx [rustc_hir::Expr<'tcx>],
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     // invalidate args mutable
     check_func_args(cx, args, map);
@@ -180,9 +189,9 @@ fn check_method_call<'tcx>(
 
     if is_idempotent(method.ident.name)
         && let Some(hir_id) = path_to_local(receiver)
-        && let Some(recorded_method) = map.get(&hir_id)
+        && let Some((recorded_method,recorded_args)) = map.get(&hir_id)
     {
-        if *recorded_method == method.ident.name {
+        if *recorded_method == method.ident.name && are_args_equal(recorded_args,args){
             span_lint(
                 cx,
                 REDUNDANT_IDEMPOTENT_CALLS,
@@ -190,7 +199,7 @@ fn check_method_call<'tcx>(
                 "redundant call to idempotent method, the result is already the same",
             );
         } else {
-            map.insert(hir_id, method.ident.name);
+            map.insert(hir_id, (method.ident.name,args));
             return Some(method.ident.name);
         }
     } else if is_idempotent(method.ident.name)
@@ -216,7 +225,7 @@ fn check_if<'tcx>(
     cx: &LateContext<'tcx>,
     then_block: &'tcx rustc_hir::Expr<'tcx>,
     else_block: &Option<&'tcx rustc_hir::Expr<'tcx>>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     // each branch gets its own clone to avoid cross contamination
     let mut then_map = map.clone();
@@ -229,16 +238,32 @@ fn check_if<'tcx>(
             let mut else_map = map.clone();
             walk_block(cx, block, &mut else_map);
             // conservative merge
-            map.retain(|hir_id, method| then_map.get(hir_id) == Some(method) && else_map.get(hir_id) == Some(method));
+            map.retain(|hir_id, (method,args)| {
+                if let Some((obtained_method,obtained_args)) = then_map.get(hir_id)&&
+                let Some((obtained_method2,obtained_args2)) = else_map.get(hir_id){
+                    return obtained_method == method && are_args_equal(args,obtained_args) && obtained_method2 == method && are_args_equal(args,obtained_args2) ;
+                }                
+                false
+            });
         } else {
             //"else if" or other node diff than block,
             // clear everything that the then branch might have changed
-            map.retain(|hir_id, method| then_map.get(hir_id) == Some(method));
+               map.retain(|hir_id, (method,args)|{ 
+                    if let Some((obtained_method,obtained_args)) = then_map.get(hir_id){
+                        return obtained_method == method && are_args_equal(args,obtained_args);
+                    }
+                    false
+                });
             check_expr(cx, else_expr, map);
         }
     } else {
         // no "else" branch
-        map.retain(|hir_id, method| then_map.get(hir_id) == Some(method));
+        map.retain(|hir_id, (method,args)|{ 
+            if let Some((obtained_method,obtained_args)) = then_map.get(hir_id){
+                return obtained_method == method && are_args_equal(args,obtained_args)
+            }
+            false
+        });
     }
     None
 }
@@ -247,13 +272,13 @@ fn check_assign<'tcx>(
     cx: &LateContext<'tcx>,
     left_value: &'tcx rustc_hir::Expr<'tcx>,
     right_value: &'tcx rustc_hir::Expr<'tcx>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
 
     if let Some(dst_hir_id) = path_to_local(left_value) {
-        if !try_inherit_alias(right_value, dst_hir_id, map) {
+        if let (retval,args) = try_inherit_alias(right_value, dst_hir_id, map) && retval{
             if let Some(symbol) = check_expr(cx, right_value, map) {
-                map.insert(dst_hir_id, symbol);
+                map.insert(dst_hir_id, (symbol,args));
             } else {
                 invalidate_left_value(left_value, map);
             }
@@ -267,21 +292,26 @@ fn check_assign<'tcx>(
 fn check_loop<'tcx>(
     cx: &LateContext<'tcx>,
     block: &'tcx rustc_hir::Block<'tcx>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     let mut loop_map = map.clone();
     walk_block(cx, block, &mut loop_map);
 
     // A state survives only if it existed before the loop and if it was left completely identical
     // inside the loop body.
-    map.retain(|hir_id, method| loop_map.get(hir_id) == Some(method));
+    map.retain(|hir_id, (method,args)|{ 
+        if let Some((obtained_method,obtained_args)) = loop_map.get(hir_id){
+            return obtained_method == method && are_args_equal(args,obtained_args)
+        }
+        false
+    });
     None
 }
 
 fn check_match<'tcx>(
     cx: &LateContext<'tcx>,
     arms: &'tcx [rustc_hir::Arm<'tcx>],
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &'tcx[ rustc_hir::Expr<'tcx>])>,
 ) -> Option<Symbol> {
     if arms.is_empty() {
         return None;
@@ -299,7 +329,14 @@ fn check_match<'tcx>(
         arm_maps.push(arm_map);
     }
     // A variable keeps its tracking state if it is present and identical across all match arms.
-    map.retain(|hir_id, method| arm_maps.iter().all(|arm_map| arm_map.get(hir_id) == Some(method)));
+    map.retain(|hir_id, (method,args)| {
+        arm_maps.iter().all(|arm_map| {
+            if let Some((obtained_method,obtained_args)) = arm_map.get(hir_id){
+                return obtained_method == method && are_args_equal(args,obtained_args)
+            }
+            false
+        })
+    });
 
     None
 }
@@ -307,7 +344,7 @@ fn check_match<'tcx>(
 fn check_closure<'tcx>(
     cx: &LateContext<'tcx>,
     closure: &'tcx rustc_hir::Closure<'tcx>,
-    map: &mut FxIndexMap<HirId, Symbol>,
+    map: &mut FxIndexMap<HirId,(Symbol, &[ rustc_hir::Expr<'_>])>,
 ) -> Option<Symbol> {
     // invalidate any variables captured mutably
     for capture in cx.typeck_results().closure_min_captures_flattened(closure.def_id) {
@@ -318,18 +355,18 @@ fn check_closure<'tcx>(
     None
 }
 
-fn try_inherit_alias(
+fn try_inherit_alias<'a>(
     expr: &rustc_hir::Expr<'_>,
     pat_hir_id: HirId,
-    map: &mut FxIndexMap<HirId, Symbol>,
-) -> bool {
+    map: &mut FxIndexMap<HirId,(Symbol, &'a[ rustc_hir::Expr<'a>])>,
+) -> (bool, &'a[ rustc_hir::Expr<'a>]) {
     if let Some(src_hir_id) = path_to_local(expr)
-        && let Some(&symbol) = map.get(&src_hir_id)
+        && let Some(&(symbol,args)) = map.get(&src_hir_id)
     {
-        map.insert(pat_hir_id, symbol);
-        true
+        map.insert(pat_hir_id, (symbol,args));
+        (true,args)
     } else {
-        false
+        (false,&[])
     }
 }
 
