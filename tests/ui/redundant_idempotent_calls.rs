@@ -122,9 +122,8 @@ fn assign_alias_should_lint() {
 
 fn condition_should_lint() {
     let x = "Your heart's been aching, but you're too shy to say it".to_lowercase();
-    if x.to_lowercase() == "Inside, we both know what's been going on" { }
+    if x.to_lowercase() == "Inside, we both know what's been going on" {}
     //~^ redundant_idempotent_calls
-
 }
 
 fn func_arg_should_lint() {
@@ -178,24 +177,24 @@ fn struct_should_lint() {
     }
 
     let x = "Never gonna say goodbye".to_lowercase();
-    let _ = MyStruct { field: x.to_lowercase() };
+    let _ = MyStruct {
+        field: x.to_lowercase(),
+    };
     //~^ redundant_idempotent_calls
-
 }
 
-fn idempotent_with_args(){
+fn idempotent_with_args() {
     let mut x = 3.12_f64.max(0_f64);
-    x=x.max(0_f64);
+    x = x.max(0_f64);
     //~^ redundant_idempotent_calls
     let mut y = 1.12_f64.max(0_f64);
-    y=y.max(2_f64);
+    y = y.max(2_f64);
 
     // this is not getting detected, if you want more edges on your edge case...
     let confusion = 2_f64;
     let mut z = 1.12_f64.max(confusion);
-    z=z.max(confusion); 
+    z = z.max(confusion);
     //~^ redundant_idempotent_calls
-
 }
 fn main() {
     let var = 1.32_f64.floor().floor();
