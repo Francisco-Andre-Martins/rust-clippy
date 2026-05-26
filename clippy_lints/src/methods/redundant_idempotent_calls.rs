@@ -65,7 +65,7 @@ fn check_let<'tcx>(cx: &LateContext<'tcx>, local: &'tcx rustc_hir::LetStmt<'tcx>
         } else {
             if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
                 // try to inherit the alias symbol otherwise we check the expr
-                if let (retval,args) = try_inherit_alias(expr, hir_id, map) && retval{
+                if let (retval,args) = try_inherit_alias(expr, hir_id, map) && !retval{
                     if let Some(symbol) = check_expr(cx, expr, map) {
                         map.insert(hir_id, (symbol,args));
                     }
@@ -205,8 +205,6 @@ fn check_method_call<'tcx>(
     } else if is_idempotent(method.ident.name)
         && let ExprKind::MethodCall(recursive_method, ..) = receiver.kind
     {
-        //println!("the og name is {:#?}, the upwards is
-        // {:#?}",method.ident.name,recursive_method.ident.name);
         if method.ident.name == recursive_method.ident.name {
             span_lint(
                 cx,
@@ -276,7 +274,7 @@ fn check_assign<'tcx>(
 ) -> Option<Symbol> {
 
     if let Some(dst_hir_id) = path_to_local(left_value) {
-        if let (retval,args) = try_inherit_alias(right_value, dst_hir_id, map) && retval{
+        if let (retval,args) = try_inherit_alias(right_value, dst_hir_id, map) && !retval{
             if let Some(symbol) = check_expr(cx, right_value, map) {
                 map.insert(dst_hir_id, (symbol,args));
             } else {
