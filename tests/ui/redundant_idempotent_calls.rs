@@ -183,7 +183,20 @@ fn struct_should_lint() {
 
 }
 
+fn idempotent_with_args(){
+    let mut x = 3.12_f64.max(0_f64);
+    x=x.max(0_f64);
+    //~^ redundant_idempotent_calls
+    let mut y = 1.12_f64.max(0_f64);
+    y=y.max(2_f64);
 
+    // this is not getting detected, if you want more edges on your edge case...
+    let confusion = 2_f64;
+    let mut z = 1.12_f64.max(confusion);
+    z=z.max(confusion); 
+    //~^ redundant_idempotent_calls
+
+}
 fn main() {
     let var = 1.32_f64.floor().floor();
     //~^ redundant_idempotent_calls
