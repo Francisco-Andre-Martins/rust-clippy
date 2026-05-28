@@ -1,12 +1,13 @@
 use clippy_utils::consts::ConstEvalCtxt;
-use clippy_utils::diagnostics::span_lint;
+use clippy_utils::diagnostics::span_lint_and_sugg;
+use clippy_utils::source::snippet_with_applicability;
 use clippy_utils::sym;
 use rustc_data_structures::fx::FxIndexMap;
+use rustc_errors::Applicability;
 use rustc_hir::def::Res;
 use rustc_hir::{Body, ExprKind, HirId, Mutability, PatKind, QPath, StmtKind};
 use rustc_lint::LateContext;
 use rustc_span::Symbol;
-// use crate::methods::REDUNDANT_IDEMPOTENT_CALLS_INFO;
 
 use super::REDUNDANT_IDEMPOTENT_CALLS;
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
@@ -46,6 +47,9 @@ fn invalidate_left_value<'tcx>(
 ) {
     if let Some(hir_id) = path_to_local(expr) {
         map.shift_remove(&hir_id);
+
+        // if any entry that its args reference the variable
+        map.retain(|_, (_, args)| !args.iter().any(|arg| path_to_local(arg) == Some(hir_id)));
     }
 }
 
@@ -56,10 +60,10 @@ fn check_let<'tcx>(
 ) {
     if let Some(init) = local.init {
         // inrelevant and inserted by the compiler
-        let expr = strip_drop_temps(init);
+        let expr = strip_parens_and_temps(init);
 
         if let ExprKind::MethodCall(method, receiver, args, _) = &expr.kind
-            && is_idempotent(method.ident.name)
+            && is_idempotent(cx, expr, method.ident.name)
         {
             check_method_call(cx, expr, method, receiver, args, map);
             // record the new binding if it is a simple identifier
@@ -69,9 +73,7 @@ fn check_let<'tcx>(
         } else {
             if let PatKind::Binding(_, hir_id, _, _) = local.pat.kind {
                 // try to inherit the alias symbol otherwise we check the expr
-                if let (retval, _) = try_inherit_alias(expr, hir_id, map)
-                    && !retval
-                {
+                if !try_inherit_alias(expr, hir_id, map) {
                     if let Some((symbol, args)) = check_expr(cx, expr, map) {
                         map.insert(hir_id, (symbol, args));
                     }
@@ -87,11 +89,37 @@ fn check_let<'tcx>(
     }
 }
 
-fn is_idempotent(name: Symbol) -> bool {
-    matches!(
+fn is_idempotent<'tcx>(cx: &LateContext<'tcx>, expr: &rustc_hir::Expr<'tcx>, name: Symbol) -> bool {
+    if !matches!(
         name,
-        sym::to_lowercase | sym::to_uppercase | sym::trim | sym::abs | sym::floor | sym::max
-    )
+        sym::trim
+            | sym::trim_start
+            | sym::trim_end
+            | sym::to_lowercase
+            | sym::to_uppercase
+            | sym::to_ascii_lowercase
+            | sym::to_ascii_uppercase
+            | sym::abs
+            | sym::floor
+            | sym::ceil
+            | sym::round
+            | sym::signum
+            | sym::max
+            | sym::min
+            | sym::clamp
+            | sym::to_vec
+            | sym::and
+            | sym::or
+    ) {
+        return false;
+    }
+    // check if the method comes from the stdlib
+    if let Some(def_id) = cx.typeck_results().type_dependent_def_id(expr.hir_id) {
+        let crate_name = cx.tcx.crate_name(def_id.krate);
+        crate_name == sym::std || crate_name == sym::alloc || crate_name == sym::core
+    } else {
+        false
+    }
 }
 
 fn path_to_local(expr: &rustc_hir::Expr<'_>) -> Option<HirId> {
@@ -178,8 +206,21 @@ fn check_func_args<'tcx>(
             check_expr(cx, arg, map);
         }
     }
-    return None;
+    None
 }
+
+fn is_expr_safe_to_compare(expr: &rustc_hir::Expr<'_>) -> bool {
+    match &expr.kind {
+        ExprKind::Lit(_) | ExprKind::Path(_) => true,
+        ExprKind::Unary(_, inner) => is_expr_safe_to_compare(inner),
+        // to cover constructors just like Some(1), Ok(2), None (but only literals)
+        ExprKind::Call(func, args) => {
+            matches!(func.kind, ExprKind::Path(_)) && args.iter().all(is_expr_safe_to_compare)
+        },
+        _ => false,
+    }
+}
+
 fn are_args_equal<'tcx>(
     cx: &LateContext<'tcx>,
     args1: &'tcx [rustc_hir::Expr<'tcx>],
@@ -199,6 +240,10 @@ fn are_args_equal<'tcx>(
             if id1 != id2 {
                 return false;
             }
+        } else if is_expr_safe_to_compare(arg1) && is_expr_safe_to_compare(arg2) {
+            if !clippy_utils::SpanlessEq::new(cx).eq_expr(arg1.span.ctxt(), arg1, arg2) {
+                return false;
+            }
         } else {
             return false;
         }
@@ -214,13 +259,13 @@ fn check_method_call<'tcx>(
     args: &'tcx [rustc_hir::Expr<'tcx>],
     map: &mut FxIndexMap<HirId, (Symbol, &'tcx [rustc_hir::Expr<'tcx>])>,
 ) -> Option<(Symbol, &'tcx [rustc_hir::Expr<'tcx>])> {
+    let mut applicability = Applicability::MachineApplicable;
+    let peeled_receiver = strip_parens_and_temps(receiver);
+    let method_name = method.ident.name;
+    let is_idemp = is_idempotent(cx, expr, method_name);
 
-    let peeled_receiver = strip_drop_temps(receiver);
-
-    // recurse into receiver only if it's not itself a method call
-    if !matches!(peeled_receiver.kind, ExprKind::MethodCall(..)) {
-        check_expr(cx, receiver, map);
-    }
+    // recurse to catch inner redundancies
+    check_expr(cx, receiver, map);
 
     // invalidate args mutable
     check_func_args(cx, args, map);
@@ -236,36 +281,38 @@ fn check_method_call<'tcx>(
         }
     }
 
-    if is_idempotent(method.ident.name)
+    if is_idemp
         && let Some(hir_id) = path_to_local(peeled_receiver)
         && let Some((recorded_method, recorded_args)) = map.get(&hir_id)
     {
-        if *recorded_method == method.ident.name && are_args_equal(cx, recorded_args, args) {
-            span_lint(
+        if *recorded_method == method_name && are_args_equal(cx, recorded_args, args) {
+            span_lint_and_sugg(
                 cx,
                 REDUNDANT_IDEMPOTENT_CALLS,
                 expr.span,
                 "redundant call to idempotent method, the result is already the same",
+                "replace with",
+                snippet_with_applicability(cx, peeled_receiver.span, "..", &mut applicability).to_string(),
+                applicability,
             );
         } else {
-            map.insert(hir_id, (method.ident.name, args));
-            return Some((method.ident.name, args));
+            map.insert(hir_id, (method_name, args));
+            return Some((method_name, args));
         }
-    } else if is_idempotent(method.ident.name)
-        && let ExprKind::MethodCall(recursive_method, _, recv_args, _) = peeled_receiver.kind
-    {
-        if method.ident.name == recursive_method.ident.name
-            && are_args_equal(cx, recv_args, args)
-        {
-            span_lint(
+    } else if is_idemp && let ExprKind::MethodCall(recursive_method, _, recv_args, _) = peeled_receiver.kind {
+        if method_name == recursive_method.ident.name && are_args_equal(cx, recv_args, args) {
+            span_lint_and_sugg(
                 cx,
                 REDUNDANT_IDEMPOTENT_CALLS,
                 expr.span,
                 "redundant call to idempotent method, the result is already the same",
+                "replace with",
+                snippet_with_applicability(cx, peeled_receiver.span, "..", &mut applicability).to_string(),
+                applicability,
             );
         }
-    } else if is_idempotent(method.ident.name) {
-        return Some((method.ident.name, args));
+    } else if is_idemp {
+        return Some((method_name, args));
     }
     None
 }
@@ -328,9 +375,7 @@ fn check_assign<'tcx>(
     map: &mut FxIndexMap<HirId, (Symbol, &'tcx [rustc_hir::Expr<'tcx>])>,
 ) -> Option<(Symbol, &'tcx [rustc_hir::Expr<'tcx>])> {
     if let Some(dst_hir_id) = path_to_local(left_value) {
-        if let (retval, _) = try_inherit_alias(right_value, dst_hir_id, map)
-            && !retval
-        {
+        if !try_inherit_alias(right_value, dst_hir_id, map) {
             if let Some((symbol, args)) = check_expr(cx, right_value, map) {
                 map.insert(dst_hir_id, (symbol, args));
             } else {
@@ -413,21 +458,31 @@ fn try_inherit_alias<'a>(
     expr: &rustc_hir::Expr<'_>,
     pat_hir_id: HirId,
     map: &mut FxIndexMap<HirId, (Symbol, &'a [rustc_hir::Expr<'a>])>,
-) -> (bool, &'a [rustc_hir::Expr<'a>]) {
+) -> bool {
     if let Some(src_hir_id) = path_to_local(expr)
         && let Some(&(symbol, args)) = map.get(&src_hir_id)
     {
         map.insert(pat_hir_id, (symbol, args));
-        (true, args)
+        true
     } else {
-        (false, &[])
+        false
     }
 }
 
-fn strip_drop_temps<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>) -> &'tcx rustc_hir::Expr<'tcx> {
+fn strip_parens_and_temps<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>) -> &'tcx rustc_hir::Expr<'tcx> {
     let mut e = expr;
-    while let ExprKind::DropTemps(inner) = &e.kind {
-        e = inner;
+    loop {
+        match &e.kind {
+            ExprKind::DropTemps(inner) => e = inner,
+            ExprKind::Block(block, _) if block.stmts.is_empty() => {
+                if let Some(tail) = block.expr {
+                    e = tail;
+                } else {
+                    break;
+                }
+            },
+            _ => break,
+        }
     }
     e
 }

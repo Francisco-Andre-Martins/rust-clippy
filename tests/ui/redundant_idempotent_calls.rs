@@ -1,5 +1,5 @@
 #![warn(clippy::redundant_idempotent_calls)]
-#![allow(unused_variables, unused_mut)]
+#![allow(unused_variables, unused_mut, clippy::self_assignment)]
 
 fn direct_chain() {
     let _ = "Ba-dum!".to_lowercase().to_lowercase();
@@ -238,7 +238,6 @@ fn repeat_should_lint() {
     //~^ redundant_idempotent_calls
 }
 
-
 fn receiver_complex_should_lint() {
     let x = "Never gonna let you down".to_lowercase();
     let _ = (x.to_lowercase()).to_uppercase();
@@ -249,30 +248,67 @@ fn let_chain_should_lint() {
     let x = "Never gonna run around and desert you".to_lowercase();
     if let y = x.to_lowercase()
     //~^ redundant_idempotent_calls
-        && y.is_empty() 
-    {
-    }
+        && y.is_empty()
+    {}
 }
 
 fn addr_of_should_lint() {
     let x = "Never gonna make you cry".to_lowercase();
     let _ = &x.to_lowercase();
     //~^ redundant_idempotent_calls
-
 }
 
-fn double_lint_should_lint_only_once() {
-    let x = "Never gonna say goodbye".to_lowercase();
-    x.to_lowercase().to_lowercase();
-    //~^ redundant_idempotent_calls
-
+fn custom_type_should_not_lint() {
+    struct Wrapper;
+    impl Wrapper {
+        fn abs(&self) -> Wrapper {
+            Wrapper
+        }
+    }
+    let x = Wrapper.abs();
+    x.abs(); // Wrapper::abs is not the stdlib abs so it should not lint
 }
 
-fn main() {
-    let var = 1.32_f64.floor().floor();
+fn mutable_var_should_not_lint() {
+    let mut val = Some(1_i32);
+    let x = Some(0).and(val);
+    val = Some(99);
+    x.and(val);
+}
+
+fn idempotent_methods_should_lint() {
+    let _ = Some(1).and(None::<i32>).and(None::<i32>);
     //~^ redundant_idempotent_calls
-    let var2 = 1.32_f64;
-    let mut var3 = 1.32_f64.floor();
-    var3 = var3.floor();
+    let _ = Some(1).and(Some(2)).and(Some(2));
+    //~^ redundant_idempotent_calls
+    let _ = None::<i32>.or(Some(2)).or(Some(2));
+    //~^ redundant_idempotent_calls
+    let _ = Some(1).or(Some(2)).or(Some(2));
+    //~^ redundant_idempotent_calls
+    let mut a = 5_i32;
+    a = a.min(10).min(10);
+    //~^ redundant_idempotent_calls
+    let _ = 1_i32.clamp(-1, 1).clamp(-1, 1);
+    //~^ redundant_idempotent_calls
+    let _ = b"Never gonna say goodbye".to_vec().to_vec();
+    //~^ redundant_idempotent_calls
+    let _ = 1.32_f64.ceil().ceil();
+    //~^ redundant_idempotent_calls
+    let _ = 1.32_f64.signum().signum();
+    //~^ redundant_idempotent_calls
+    let _ = "  Never gonna tell a lie and hurt you  ".trim_start().trim_start();
+    //~^ redundant_idempotent_calls
+    let _ = "  Ooh (Give you up)  ".trim_end().trim_end();
+    //~^ redundant_idempotent_calls
+    let x = "Ooh-ooh (Give you up)".to_ascii_lowercase();
+    let _ = x.to_ascii_lowercase();
+    //~^ redundant_idempotent_calls
+    let y = "Ooh (Never gonna give, never gonna give)".to_ascii_uppercase();
+    let _ = y.to_ascii_uppercase();
+    //~^ redundant_idempotent_calls
+    let x = 1.32_f64.round();
+    let _ = x.round();
     //~^ redundant_idempotent_calls
 }
+
+fn main() {}
