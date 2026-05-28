@@ -179,8 +179,8 @@ fn struct_should_lint() {
     let x = "Never gonna say goodbye".to_lowercase();
     let _ = MyStruct {
         field: x.to_lowercase(),
+        //~^ redundant_idempotent_calls
     };
-    //~^ redundant_idempotent_calls
 }
 
 fn idempotent_with_args() {
@@ -196,6 +196,78 @@ fn idempotent_with_args() {
     z = z.max(confusion);
     //~^ redundant_idempotent_calls
 }
+
+fn unary_should_lint() {
+    let x = 1.0_f64.abs();
+    let _ = -(x.abs());
+    //~^ redundant_idempotent_calls
+}
+
+fn let_else_should_lint() {
+    let x = "Never gonna tell a lie and hurt you".to_lowercase();
+    let Some(_) = Some(1) else {
+        x.to_lowercase();
+        //~^ redundant_idempotent_calls
+        return;
+    };
+}
+
+fn max_different_args_should_not_lint() {
+    let _ = 1.0_f64.max(2.0).max(3.0);
+}
+
+fn cast_should_lint() {
+    let x = 1.0_f64.floor();
+    let _ = x.floor() as f32;
+    //~^ redundant_idempotent_calls
+}
+
+fn index_should_lint() {
+    let x = "Never gonna give you up".to_lowercase();
+    let arr = [1, 2, 3];
+    let _y = arr[{
+        let _ = x.to_lowercase();
+        //~^ redundant_idempotent_calls
+        0
+    }];
+}
+
+fn repeat_should_lint() {
+    let x = 1.0_f64.floor();
+    let _ = [x.floor(); 3];
+    //~^ redundant_idempotent_calls
+}
+
+
+fn receiver_complex_should_lint() {
+    let x = "Never gonna let you down".to_lowercase();
+    let _ = (x.to_lowercase()).to_uppercase();
+    //~^ redundant_idempotent_calls
+}
+
+fn let_chain_should_lint() {
+    let x = "Never gonna run around and desert you".to_lowercase();
+    if let y = x.to_lowercase()
+    //~^ redundant_idempotent_calls
+        && y.is_empty() 
+    {
+    }
+}
+
+fn addr_of_should_lint() {
+    let x = "Never gonna make you cry".to_lowercase();
+    let _ = &x.to_lowercase();
+    //~^ redundant_idempotent_calls
+
+}
+
+fn double_lint_should_lint_only_once() {
+    let x = "Never gonna say goodbye".to_lowercase();
+    x.to_lowercase().to_lowercase();
+    //~^ redundant_idempotent_calls
+
+}
+
 fn main() {
     let var = 1.32_f64.floor().floor();
     //~^ redundant_idempotent_calls

@@ -55,11 +55,8 @@ fn check_let<'tcx>(
     map: &mut FxIndexMap<HirId, (Symbol, &'tcx [rustc_hir::Expr<'tcx>])>,
 ) {
     if let Some(init) = local.init {
-        let mut expr = init;
         // inrelevant and inserted by the compiler
-        while let ExprKind::DropTemps(inner) = &expr.kind {
-            expr = inner;
-        }
+        let expr = strip_drop_temps(init);
 
         if let ExprKind::MethodCall(method, receiver, args, _) = &expr.kind
             && is_idempotent(method.ident.name)
@@ -83,6 +80,10 @@ fn check_let<'tcx>(
                 check_expr(cx, expr, map);
             }
         }
+    }
+
+    if let Some(els) = local.els {
+        walk_block(cx, els, map);
     }
 }
 
@@ -119,7 +120,17 @@ fn check_expr<'tcx>(
         ExprKind::Closure(closure) => check_closure(cx, closure, map),
         ExprKind::Block(block, _) => walk_block(cx, block, map),
         ExprKind::Ret(Some(expr)) => check_expr(cx, expr, map),
+        ExprKind::Cast(expr, _) => check_expr(cx, expr, map),
         ExprKind::DropTemps(inner) => check_expr(cx, inner, map),
+        ExprKind::Unary(_, expr) => check_expr(cx, expr, map),
+        ExprKind::Repeat(expr, _) => check_expr(cx, expr, map),
+        ExprKind::Let(let_expr) => check_expr(cx, let_expr.init, map),
+        ExprKind::AddrOf(_, _, expr) => check_expr(cx, expr, map),
+        ExprKind::Index(arr, idx, _) => {
+            check_expr(cx, arr, map);
+            check_expr(cx, idx, map);
+            None
+        },
         ExprKind::If(cond, then_block, else_block) => {
             check_expr(cx, cond, map);
             check_if(cx, then_block, else_block, map)
@@ -182,15 +193,19 @@ fn are_args_equal<'tcx>(
             if const_1 != const_2 {
                 return false;
             }
-        } else {
-            // this is probably bad, cause between calls, the args may be muted
-            if arg1.hir_id != arg2.hir_id {
+        } else if let Some(id1) = path_to_local(arg1)
+            && let Some(id2) = path_to_local(arg2)
+        {
+            if id1 != id2 {
                 return false;
             }
+        } else {
+            return false;
         }
     }
     true
 }
+
 fn check_method_call<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx rustc_hir::Expr<'tcx>,
@@ -199,6 +214,14 @@ fn check_method_call<'tcx>(
     args: &'tcx [rustc_hir::Expr<'tcx>],
     map: &mut FxIndexMap<HirId, (Symbol, &'tcx [rustc_hir::Expr<'tcx>])>,
 ) -> Option<(Symbol, &'tcx [rustc_hir::Expr<'tcx>])> {
+
+    let peeled_receiver = strip_drop_temps(receiver);
+
+    // recurse into receiver only if it's not itself a method call
+    if !matches!(peeled_receiver.kind, ExprKind::MethodCall(..)) {
+        check_expr(cx, receiver, map);
+    }
+
     // invalidate args mutable
     check_func_args(cx, args, map);
 
@@ -208,13 +231,13 @@ fn check_method_call<'tcx>(
         if let Some(first_ty) = fn_sig.inputs().skip_binder().get(0) {
             // to get the self
             if let rustc_middle::ty::Ref(_, _, Mutability::Mut) = first_ty.kind() {
-                invalidate_left_value(receiver, map);
+                invalidate_left_value(peeled_receiver, map);
             }
         }
     }
 
     if is_idempotent(method.ident.name)
-        && let Some(hir_id) = path_to_local(receiver)
+        && let Some(hir_id) = path_to_local(peeled_receiver)
         && let Some((recorded_method, recorded_args)) = map.get(&hir_id)
     {
         if *recorded_method == method.ident.name && are_args_equal(cx, recorded_args, args) {
@@ -229,9 +252,11 @@ fn check_method_call<'tcx>(
             return Some((method.ident.name, args));
         }
     } else if is_idempotent(method.ident.name)
-        && let ExprKind::MethodCall(recursive_method, ..) = receiver.kind
+        && let ExprKind::MethodCall(recursive_method, _, recv_args, _) = peeled_receiver.kind
     {
-        if method.ident.name == recursive_method.ident.name {
+        if method.ident.name == recursive_method.ident.name
+            && are_args_equal(cx, recv_args, args)
+        {
             span_lint(
                 cx,
                 REDUNDANT_IDEMPOTENT_CALLS,
@@ -397,4 +422,12 @@ fn try_inherit_alias<'a>(
     } else {
         (false, &[])
     }
+}
+
+fn strip_drop_temps<'tcx>(expr: &'tcx rustc_hir::Expr<'tcx>) -> &'tcx rustc_hir::Expr<'tcx> {
+    let mut e = expr;
+    while let ExprKind::DropTemps(inner) = &e.kind {
+        e = inner;
+    }
+    e
 }
