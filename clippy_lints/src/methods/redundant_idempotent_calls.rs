@@ -104,6 +104,7 @@ fn check_expr<'tcx>(
         _ => None,
     }
 }
+
 // Checks a let expression
 fn check_let<'tcx>(
     cx: &LateContext<'tcx>,
