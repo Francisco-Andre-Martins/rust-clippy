@@ -13,11 +13,10 @@ use super::REDUNDANT_IDEMPOTENT_CALLS;
 
 // Checks all function code
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) {
-    // If the body of the funciton is a block
+    // If the body of the function is a block
     if let ExprKind::Block(block, _) = &body.value.kind {
         // tracks which local variables have already had an idempotent method applied
         // and the arguments used with them
-        // HirId : name of the method that was applied
         let mut map = FxIndexMap::default();
         walk_block(cx, block, &mut map);
     }
@@ -301,7 +300,7 @@ fn check_loop<'tcx>(
     None
 }
 
-//Checks matches
+// Checks matches
 fn check_match<'tcx>(
     cx: &LateContext<'tcx>,
     arms: &'tcx [rustc_hir::Arm<'tcx>],
